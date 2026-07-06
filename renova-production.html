@@ -150,6 +150,9 @@
   .bar.pre{background:var(--pre-bg);color:#2c4573;border-color:#9fb6e0}
   .bar.prod{background:var(--prod-bg);color:#1c6a52;border-color:#8fd0b8}
   .bar.inst{background:var(--inst-bg);color:#8a4e16;border-color:#e4b98a}
+  .bar.seg-first{border-top-right-radius:0;border-bottom-right-radius:0;border-right-style:dashed}
+  .bar.seg-mid{border-radius:0;border-left-style:dashed;border-right-style:dashed}
+  .bar.seg-last{border-top-left-radius:0;border-bottom-left-radius:0;border-left-style:dashed}
   .bar.conflict{outline:2px solid var(--danger);outline-offset:-1px;z-index:4;
     background-image:repeating-linear-gradient(45deg,rgba(213,73,63,.22) 0 5px,transparent 5px 10px)}
   .g-empty{padding:26px;text-align:center;color:var(--muted)}
@@ -357,6 +360,17 @@ function workdayIndex(phase,day){ let i=0, cur=new Date(phase.start); const t=st
    daily counts always sum back to the job's cabinet count (front-loads any remainder). */
 function cabsForPhaseDay(cab, days, idx){ cab=Math.max(0,cab|0); days=Math.max(1,days|0);
   const base=Math.floor(cab/days), rem=cab%days; return base + (idx<=rem?1:0); }
+/* split a phase's calendar span into contiguous WEEKDAY-only runs, so bars break at weekends
+   (no work is placed on Sat/Sun). Returns array of [firstWeekday, lastWeekday] date pairs. */
+function weekdaySegments(start,end){
+  const segs=[]; const e=stripTime(end); let segStart=null, prev=null;
+  for(let d=stripTime(start); d<=e; d=addDays(d,1)){
+    if(isWeekend(d)){ if(segStart){ segs.push([segStart,prev]); segStart=null; } }
+    else { if(!segStart) segStart=d; prev=d; }
+  }
+  if(segStart) segs.push([segStart,prev]);
+  return segs;
+}
 
 /* =================================================================
    STATE
@@ -636,13 +650,19 @@ function buildGantt(map,conflicts){
 
   function barFor(job,phaseKey,cls,label){
     const p=map[job.id][phaseKey];
-    const x=daysBetween(winStart,p.start)*DAY_W;
-    const w=(daysBetween(p.start,p.end)+1)*DAY_W;
     const conf = cflag[job.id+"|"+phaseKey] ? " conflict":"";
     const ov = (p.override||p.startOverride) ? " ✎":"";
     const title = `${esc(job.name)} — ${label}: ${fmtRange(p.start,p.end)} (${p.days} wd)`;
-    return `<div class="bar ${cls}${conf}" style="left:${x}px;width:${Math.max(w,DAY_W)}px"
-      title="${title}" onclick="openJobModal('${job.id}')">${label}${ov}</div>`;
+    const segs=weekdaySegments(p.start,p.end);
+    if(!segs.length) return "";
+    return segs.map((sg,i)=>{
+      const x=daysBetween(winStart,sg[0])*DAY_W;
+      const w=(daysBetween(sg[0],sg[1])+1)*DAY_W;
+      const text = i===0 ? `${label}${ov}` : "";
+      const edge = (segs.length>1 ? (i===0?" seg-first":(i===segs.length-1?" seg-last":" seg-mid")) : "");
+      return `<div class="bar ${cls}${conf}${edge}" style="left:${x}px;width:${Math.max(w,DAY_W)}px"
+        title="${title}" onclick="openJobModal('${job.id}')">${text}</div>`;
+    }).join("");
   }
 
   let rows="";
