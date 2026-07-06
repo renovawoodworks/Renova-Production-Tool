@@ -116,28 +116,42 @@
     width:210px;min-width:210px;flex:none}
   .g-month{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;
     padding:5px 6px;border-right:1px solid var(--line2);white-space:nowrap;overflow:hidden}
-  .g-week{font-size:10.5px;color:var(--muted);padding:3px 4px;border-right:1px solid var(--line2);text-align:center;
-    white-space:nowrap}
-  .g-row{display:flex;position:relative;border-bottom:1px solid var(--line2);min-height:46px}
+  .g-dayrow{display:flex;position:relative}
+  .g-day{flex:none;border-right:1px solid var(--line2);text-align:center;padding:2px 0 3px;line-height:1.1;
+    color:var(--muted)}
+  .g-day .wd{display:block;font-size:9px;text-transform:uppercase}
+  .g-day .dn{display:block;font-size:11px;font-weight:700;color:var(--ink)}
+  .g-day.we{background:#eef1f5}
+  .g-day.we .dn{color:var(--muted)}
+  .g-day.td{background:#fbe8db}
+  .g-day.td .dn{color:var(--danger)}
+  .g-label-col{position:sticky;left:0;z-index:6;background:#fff;border-right:1px solid var(--line);
+    width:210px;min-width:210px;flex:none;display:flex;align-items:center;padding-left:9px;
+    font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  .g-row{display:flex;position:relative;border-bottom:1px solid var(--line);min-height:66px}
   .g-row:hover{background:#f8fafc}
-  .g-rowlabel{position:sticky;left:0;z-index:4;background:inherit;width:210px;min-width:210px;flex:none;
-    border-right:1px solid var(--line);padding:6px 9px;background:#fff}
+  .g-rowlabel{position:sticky;left:0;z-index:4;width:210px;min-width:210px;flex:none;
+    border-right:1px solid var(--line);padding:7px 9px;background:#fff;display:flex;flex-direction:column;justify-content:center}
   .g-row:hover .g-rowlabel{background:#f8fafc}
   .g-rowlabel .jn{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .g-rowlabel .jc{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .g-rowlabel .acts{margin-top:3px;display:flex;gap:4px}
-  .g-track{position:relative;flex:1}
-  .g-weekend{position:absolute;top:0;bottom:0;background:#f4f6f9}
+  .g-rowlabel .acts{margin-top:4px;display:flex;gap:4px}
+  .g-track{position:relative;flex:none}
+  .g-weekend{position:absolute;top:0;bottom:0;background:rgba(90,105,125,.09);z-index:0}
+  .g-lane{position:absolute;left:0;right:0;height:22px;z-index:1}
+  .g-lane.l0{top:0} .g-lane.l1{top:22px} .g-lane.l2{top:44px}
+  .g-lane.pre{background:rgba(107,140,201,.07);border-bottom:1px dashed var(--line2)}
+  .g-lane.prod{background:rgba(47,158,125,.07);border-bottom:1px dashed var(--line2)}
+  .g-lane.inst{background:rgba(224,134,60,.08)}
   .g-today{position:absolute;top:0;bottom:0;width:2px;background:var(--danger);z-index:3}
-  .g-today .lab{position:absolute;top:-16px;left:-16px;font-size:10px;color:var(--danger);font-weight:700;white-space:nowrap}
-  .bar{position:absolute;height:16px;border-radius:4px;top:5px;font-size:10.5px;color:#173;line-height:16px;
-    padding:0 5px;white-space:nowrap;overflow:hidden;cursor:pointer;border:1px solid rgba(0,0,0,.08)}
-  .bar.pre{background:var(--pre-bg);color:#2c4573;border-color:#c3d3f0}
-  .bar.prod{background:var(--prod-bg);color:#1c6a52;border-color:#b7e2d2}
-  .bar.inst{background:var(--inst-bg);color:#8a4e16;border-color:#eecfae}
-  .bar.stack2{top:24px;height:15px}
-  .bar.conflict{outline:2px solid var(--danger);outline-offset:-1px;
-    background-image:repeating-linear-gradient(45deg,rgba(213,73,63,.20) 0 5px,transparent 5px 10px)}
+  .g-today .lab{position:absolute;top:-14px;left:-16px;font-size:10px;color:var(--danger);font-weight:700;white-space:nowrap}
+  .bar{position:absolute;height:16px;border-radius:4px;top:3px;font-size:10.5px;color:#173;line-height:16px;
+    padding:0 6px;white-space:nowrap;overflow:hidden;cursor:pointer;border:1px solid rgba(0,0,0,.08);z-index:2}
+  .bar.pre{background:var(--pre-bg);color:#2c4573;border-color:#9fb6e0}
+  .bar.prod{background:var(--prod-bg);color:#1c6a52;border-color:#8fd0b8}
+  .bar.inst{background:var(--inst-bg);color:#8a4e16;border-color:#e4b98a}
+  .bar.conflict{outline:2px solid var(--danger);outline-offset:-1px;z-index:4;
+    background-image:repeating-linear-gradient(45deg,rgba(213,73,63,.22) 0 5px,transparent 5px 10px)}
   .g-empty{padding:26px;text-align:center;color:var(--muted)}
 
   /* leads */
@@ -299,7 +313,7 @@ const LEAD_STAGES = [
   "Scheduled"
 ];
 const PRE_DEFAULT_DAYS = 5;
-const DAY_W = 20;              // px per calendar day on the Gantt
+const DAY_W = 26;              // px per calendar day on the Gantt
 const WINDOW_BACK_DAYS = 14;   // days shown before today
 const WINDOW_FWD_DAYS = 125;   // ~4 months after today
 const LS_KEY = "renova_state_v1";
@@ -585,13 +599,15 @@ function buildGantt(map,conflicts){
   const winStart=addDays(today(),-WINDOW_BACK_DAYS);
   const totalDays=WINDOW_BACK_DAYS+WINDOW_FWD_DAYS;
   const trackW=totalDays*DAY_W;
+  const tdMs=today().getTime();
+  const WD=["S","M","T","W","T","F","S"];
 
   // conflict phase set for highlighting: key jobId|phase
   const cflag={};
   conflicts.forEach(c=>{ cflag[c.jobA.id+"|"+c.phase]=1; cflag[c.jobB.id+"|"+c.phase]=1; });
 
-  // header: month row + week row
-  let months="", weeks="";
+  // header: month spans + one cell per day (weekday initial + date)
+  let months="", daysHdr="";
   let mStart=0, mName=winStart.getMonth();
   for(let d=0; d<=totalDays; d++){
     const day=addDays(winStart,d);
@@ -601,21 +617,24 @@ function buildGantt(map,conflicts){
       mStart=d; mName=day.getMonth();
     }
   }
-  for(let d=0; d<totalDays; d+=7){
-    const day=addDays(winStart,d);
-    weeks+=`<div class="g-week" style="width:${Math.min(7,totalDays-d)*DAY_W}px">${MONTHS[day.getMonth()]} ${day.getDate()}</div>`;
-  }
-
-  // weekend shading + today line
-  let bg="";
   for(let d=0; d<totalDays; d++){
     const day=addDays(winStart,d);
-    if(isWeekend(day)) bg+=`<div class="g-weekend" style="left:${d*DAY_W}px;width:${DAY_W}px"></div>`;
+    const we=isWeekend(day)?" we":"";
+    const isT=stripTime(day).getTime()===tdMs?" td":"";
+    daysHdr+=`<div class="g-day${we}${isT}" style="width:${DAY_W}px"><span class="wd">${WD[day.getDay()]}</span><span class="dn">${day.getDate()}</span></div>`;
+  }
+
+  // weekend shading (full row height) + today line
+  let weekendBg="";
+  for(let d=0; d<totalDays; d++){
+    const day=addDays(winStart,d);
+    if(isWeekend(day)) weekendBg+=`<div class="g-weekend" style="left:${d*DAY_W}px;width:${DAY_W}px"></div>`;
   }
   const todayX=daysBetween(winStart,today())*DAY_W;
-  bg+=`<div class="g-today" style="left:${todayX}px"><span class="lab">TODAY</span></div>`;
+  const todayLine=`<div class="g-today" style="left:${todayX}px"><span class="lab">TODAY</span></div>`;
+  const gridBg=`background-image:repeating-linear-gradient(to right, var(--line2) 0 1px, transparent 1px, transparent ${DAY_W}px)`;
 
-  function barFor(job,map,phaseKey,cls,label){
+  function barFor(job,phaseKey,cls,label){
     const p=map[job.id][phaseKey];
     const x=daysBetween(winStart,p.start)*DAY_W;
     const w=(daysBetween(p.start,p.end)+1)*DAY_W;
@@ -623,7 +642,7 @@ function buildGantt(map,conflicts){
     const ov = (p.override||p.startOverride) ? " ✎":"";
     const title = `${esc(job.name)} — ${label}: ${fmtRange(p.start,p.end)} (${p.days} wd)`;
     return `<div class="bar ${cls}${conf}" style="left:${x}px;width:${Math.max(w,DAY_W)}px"
-      title="${title}" onclick="openJobModal('${job.id}')">${label[0]}${ov}</div>`;
+      title="${title}" onclick="openJobModal('${job.id}')">${label}${ov}</div>`;
   }
 
   let rows="";
@@ -638,20 +657,20 @@ function buildGantt(map,conflicts){
           <button class="tiny ghost danger" onclick="deleteJob('${job.id}')">Delete</button>
         </div>
       </div>
-      <div class="g-track" style="width:${trackW}px">
-        ${bg}
-        ${barFor(job,map,"pre","pre","Pre")}
-        ${barFor(job,map,"prod","prod","Prod")}
-        ${barFor(job,map,"install","inst","Install")}
+      <div class="g-track" style="width:${trackW}px;${gridBg}">
+        ${weekendBg}
+        <div class="g-lane l0 pre">${barFor(job,"pre","pre","Pre-production")}</div>
+        <div class="g-lane l1 prod">${barFor(job,"prod","prod","Production")}</div>
+        <div class="g-lane l2 inst">${barFor(job,"install","inst","Installation")}</div>
+        ${todayLine}
       </div>
     </div>`;
   });
 
-  const labelHead=`<div class="g-label-col"></div>`;
   return `<div class="gantt-wrap"><div class="gantt">
     <div class="g-head">
-      <div class="g-monthrow">${labelHead}<div style="display:flex">${months}</div></div>
-      <div class="g-weekrow"><div class="g-label-col" style="border-top:1px solid var(--line2)"></div><div style="display:flex">${weeks}</div></div>
+      <div class="g-monthrow"><div class="g-label-col"></div><div style="display:flex">${months}</div></div>
+      <div class="g-dayrow"><div class="g-label-col" style="border-top:1px solid var(--line2)">Job</div><div style="display:flex">${daysHdr}</div></div>
     </div>
     ${rows}
   </div></div>`;
