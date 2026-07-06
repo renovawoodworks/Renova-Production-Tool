@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Renova Woodworks — Production Manager</title>
+
+<!-- ============================================================= -->
+<!-- GOOGLE DRIVE SYNC CONFIG                                        -->
+<!-- ============================================================= -->
+<!--
+  To enable Google Drive backup/sync you must paste your own OAuth
+  Client ID below.
+
+  How to get one (takes ~5 minutes, free):
+    1. Go to https://console.cloud.google.com/  and create/select a project.
+    2. APIs & Services > Library > enable "Google Drive API".
+    3. APIs & Services > OAuth consent screen > configure (External is fine,
+       add yourself as a Test user).
+    4. APIs & Services > Credentials > Create Credentials >
+       OAuth client ID > Application type: "Web application".
+    5. Under "Authorized JavaScript origins" add the origin you open this
+       file from. If you open the file directly it is  file://  which
+       Google does NOT allow, so serve it locally, e.g.:
+           python3 -m http.server 8080
+       then open  http://localhost:8080/renova-production.html  and add
+       http://localhost:8080  as an authorized origin.
+    6. Copy the generated Client ID and paste it below.
+
+  Everything else in the app (timeline, leads, conflicts, localStorage,
+  JSON export/import) works fully WITHOUT this — Drive is optional.
+-->
+<script>
+  const GOOGLE_CLIENT_ID = "PASTE_YOUR_OAUTH_CLIENT_ID_HERE.apps.googleusercontent.com";
+  const DRIVE_FILE_NAME  = "renova-production-data.json";
+  const DRIVE_SCOPE       = "https://www.googleapis.com/auth/drive.file";
+</script>
+
+<!-- Google Identity Services (official CDN) — used only for Drive sync -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
+<style>
+  :root{
+    --bg:#eef1f4; --panel:#ffffff; --ink:#1f2733; --muted:#5b6675;
+    --line:#d7dee6; --line2:#e7edf2; --accent:#2f6fed; --accent-d:#1f57c6;
+    --pre:#6b8cc9;   --pre-bg:#e2eafb;
+    --prod:#2f9e7d;  --prod-bg:#dcf3ea;
+    --inst:#e0863c;  --inst-bg:#fbeada;
+    --danger:#d5493f; --danger-bg:#fdeceb;
+    --ok:#2f9e7d; --warn:#c9761b;
+    --shadow:0 1px 3px rgba(20,30,45,.10),0 1px 2px rgba(20,30,45,.06);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);font-size:14px;line-height:1.45}
+  button{font-family:inherit;font-size:13px;cursor:pointer;border-radius:6px;border:1px solid var(--line);
+    background:#fff;color:var(--ink);padding:6px 11px}
+  button:hover{background:#f4f7fb}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{background:var(--accent-d)}
+  button.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+  button.ghost:hover{background:#e7edf2;color:var(--ink)}
+  button.danger{color:var(--danger);border-color:#eab8b3}
+  button.danger:hover{background:var(--danger-bg)}
+  button.tiny{padding:3px 7px;font-size:12px}
+  input,select,textarea{font-family:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--line);
+    border-radius:6px;background:#fff;color:var(--ink);width:100%}
+  input:focus,select:focus,textarea:focus{outline:2px solid #bcd0f7;border-color:var(--accent)}
+  label.fld{display:block;font-size:12px;color:var(--muted);margin:0 0 3px;font-weight:600}
+  a{color:var(--accent)}
+
+  header.app{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:40;box-shadow:var(--shadow)}
+  .hrow{display:flex;align-items:center;gap:14px;padding:9px 18px;flex-wrap:wrap}
+  .brand{font-weight:800;letter-spacing:.2px;font-size:16px;display:flex;align-items:center;gap:9px}
+  .brand .logo{width:24px;height:24px;border-radius:5px;background:linear-gradient(135deg,var(--prod),var(--accent));
+    display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800}
+  .brand small{font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.3px;text-transform:uppercase}
+  .spacer{flex:1}
+
+  .tabs{display:flex;gap:2px;padding:0 12px;background:#fff;border-bottom:1px solid var(--line)}
+  .tab{padding:10px 15px;border:none;border-bottom:3px solid transparent;background:none;color:var(--muted);
+    font-weight:600;border-radius:0}
+  .tab:hover{background:#f4f7fb}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+  /* Drive / backup bar */
+  .drivebar{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+  .dot{width:8px;height:8px;border-radius:50%;background:#b9c3ce;display:inline-block;flex:none}
+  .dot.ok{background:var(--ok)} .dot.sync{background:var(--warn);animation:pulse 1s infinite} .dot.err{background:var(--danger)}
+  @keyframes pulse{50%{opacity:.35}}
+
+  main{padding:16px 18px 60px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+
+  /* conflict banner */
+  .conflicts{margin:0 0 14px;border:1px solid #eab8b3;background:var(--danger-bg);border-radius:10px;overflow:hidden}
+  .conflicts .chd{display:flex;align-items:center;gap:8px;padding:10px 14px;font-weight:700;color:#a5352d;border-bottom:1px solid #f0cbc6}
+  .conflicts ul{margin:0;padding:6px 6px 8px;list-style:none}
+  .conflicts li{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:7px}
+  .conflicts li:hover{background:#fce3e0}
+  .conflicts .txt{flex:1}
+  .conflicts .sugg{color:#7a4a12;font-size:12.5px}
+  .conflicts .sugg b{color:#5f3a0e}
+
+  /* timeline */
+  .tl-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  .legend{display:flex;gap:14px;align-items:center;font-size:12px;color:var(--muted);flex-wrap:wrap}
+  .legend .sw{display:inline-flex;align-items:center;gap:6px}
+  .legend .box{width:14px;height:12px;border-radius:3px;display:inline-block}
+  .gantt-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow)}
+  .gantt{position:relative}
+  .g-head{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--line)}
+  .g-monthrow,.g-weekrow{display:flex;position:relative}
+  .g-label-col{position:sticky;left:0;z-index:6;background:#fff;border-right:1px solid var(--line);
+    width:210px;min-width:210px;flex:none}
+  .g-month{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;
+    padding:5px 6px;border-right:1px solid var(--line2);white-space:nowrap;overflow:hidden}
+  .g-week{font-size:10.5px;color:var(--muted);padding:3px 4px;border-right:1px solid var(--line2);text-align:center;
+    white-space:nowrap}
+  .g-row{display:flex;position:relative;border-bottom:1px solid var(--line2);min-height:46px}
+  .g-row:hover{background:#f8fafc}
+  .g-rowlabel{position:sticky;left:0;z-index:4;background:inherit;width:210px;min-width:210px;flex:none;
+    border-right:1px solid var(--line);padding:6px 9px;background:#fff}
+  .g-row:hover .g-rowlabel{background:#f8fafc}
+  .g-rowlabel .jn{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .g-rowlabel .jc{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .g-rowlabel .acts{margin-top:3px;display:flex;gap:4px}
+  .g-track{position:relative;flex:1}
+  .g-weekend{position:absolute;top:0;bottom:0;background:#f4f6f9}
+  .g-today{position:absolute;top:0;bottom:0;width:2px;background:var(--danger);z-index:3}
+  .g-today .lab{position:absolute;top:-16px;left:-16px;font-size:10px;color:var(--danger);font-weight:700;white-space:nowrap}
+  .bar{position:absolute;height:16px;border-radius:4px;top:5px;font-size:10.5px;color:#173;line-height:16px;
+    padding:0 5px;white-space:nowrap;overflow:hidden;cursor:pointer;border:1px solid rgba(0,0,0,.08)}
+  .bar.pre{background:var(--pre-bg);color:#2c4573;border-color:#c3d3f0}
+  .bar.prod{background:var(--prod-bg);color:#1c6a52;border-color:#b7e2d2}
+  .bar.inst{background:var(--inst-bg);color:#8a4e16;border-color:#eecfae}
+  .bar.stack2{top:24px;height:15px}
+  .bar.conflict{outline:2px solid var(--danger);outline-offset:-1px;
+    background-image:repeating-linear-gradient(45deg,rgba(213,73,63,.20) 0 5px,transparent 5px 10px)}
+  .g-empty{padding:26px;text-align:center;color:var(--muted)}
+
+  /* leads */
+  .board{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px}
+  .col{width:250px;min-width:250px;flex:none;background:#f5f7fa;border:1px solid var(--line);border-radius:10px;
+    display:flex;flex-direction:column;max-height:calc(100vh - 250px)}
+  .col.drag-over{outline:2px dashed var(--accent);background:#eef3fd}
+  .col-hd{padding:8px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:6px;
+    font-weight:700;font-size:12.5px;position:sticky;top:0;background:#f5f7fa;border-radius:10px 10px 0 0}
+  .col-hd .cnt{margin-left:auto;background:#dde5ee;color:var(--muted);border-radius:10px;padding:1px 8px;font-size:11px}
+  .col-body{padding:8px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;flex:1}
+  .lead{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 9px;box-shadow:var(--shadow);cursor:grab}
+  .lead:active{cursor:grabbing}
+  .lead .ln{font-weight:700;font-size:13px}
+  .lead .lc{font-size:11.5px;color:var(--muted);margin-top:1px}
+  .lead .lnote{font-size:12px;color:#41505f;margin-top:5px;white-space:pre-wrap}
+  .lead .lfoot{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap}
+  .lead .age{font-size:11px;color:var(--muted)}
+  .lead .age.old{color:var(--danger);font-weight:600}
+  .lead select{font-size:11.5px;padding:3px 5px}
+
+  /* rate table */
+  table.rt{border-collapse:collapse;width:100%;max-width:640px}
+  table.rt th,table.rt td{border:1px solid var(--line);padding:7px 9px;text-align:left}
+  table.rt th{background:#f5f7fa;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  table.rt td input{max-width:120px}
+  table.rt td.num input{max-width:90px}
+
+  /* modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(20,28,40,.45);display:flex;align-items:flex-start;
+    justify-content:center;z-index:100;padding:40px 16px;overflow:auto}
+  .modal{background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(10,20,40,.3);width:100%;max-width:560px}
+  .modal .mhd{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+  .modal .mhd h3{margin:0;font-size:16px}
+  .modal .mbody{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+  .modal .mfoot{padding:13px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .phasebox{border:1px solid var(--line2);border-radius:8px;padding:10px;background:#fafcfe}
+  .phasebox h4{margin:0 0 6px;font-size:13px;display:flex;align-items:center;gap:8px}
+  .pill{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:20px}
+  .pill.calc{background:#e3f0ea;color:#1c6a52}
+  .pill.ovr{background:#fbeada;color:#8a4e16}
+  .phasebox .calcnote{font-size:12px;color:var(--muted);margin-top:5px}
+  .rowflex{display:flex;gap:8px;align-items:flex-end}
+  .rowflex > div{flex:1}
+  .hint{font-size:11.5px;color:var(--muted)}
+  .sectlabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);
+    margin:2px 0 -2px}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#1f2733;color:#fff;
+    padding:9px 16px;border-radius:8px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:200;opacity:0;
+    transition:opacity .2s;pointer-events:none}
+  .toast.show{opacity:1}
+  .emptybox{padding:40px;text-align:center;color:var(--muted)}
+
+  /* weekly shop sheet */
+  .wksheet{background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:22px;max-width:1100px}
+  .wk-head{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px;
+    border-bottom:2px solid var(--ink);padding-bottom:12px}
+  .wk-title{font-size:20px;font-weight:800;letter-spacing:.2px}
+  .wk-sub{color:var(--muted);font-size:12.5px;margin-top:3px}
+  .wk-legend{display:flex;gap:6px;align-items:center}
+  table.wk{border-collapse:collapse;width:100%}
+  table.wk th,table.wk td{border:1px solid var(--line);padding:7px 9px;vertical-align:top;font-size:12.5px}
+  table.wk thead th{background:#f5f7fa;text-align:center;font-size:11.5px;text-transform:uppercase;letter-spacing:.3px}
+  table.wk thead th.jobhd{text-align:left}
+  table.wk th.day small{display:block;font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0;margin-top:1px}
+  table.wk td.jobcell{min-width:180px}
+  table.wk td.jobcell .jn{font-weight:700}
+  table.wk td.jobcell .jc{color:var(--muted);font-size:11.5px;margin-top:1px}
+  .pchip{display:inline-block;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:600;line-height:1.4;white-space:nowrap}
+  .pchip.pre{background:var(--pre-bg);color:#2c4573;border:1px solid #c3d3f0}
+  .pchip.prod{background:var(--prod-bg);color:#1c6a52;border:1px solid #b7e2d2}
+  .pchip.inst{background:var(--inst-bg);color:#8a4e16;border:1px solid #eecfae}
+  .pchip .pd{font-weight:800}
+  table.wk td.today-col{background:#fff8f2}
+  table.wk thead th.today-col{background:#fbe8db}
+  table.wk tfoot td{background:#f7f9fb;font-weight:700}
+  table.wk tfoot tr.loadrow:first-child td{border-top:2px solid var(--ink)}
+  table.wk tfoot td.jobcell{text-transform:uppercase;font-size:10.5px;letter-spacing:.3px;color:var(--muted);font-weight:700}
+  table.wk td.load{text-align:center;font-size:13px}
+  table.wk tfoot td.prodload{color:#1c6a52}
+  table.wk tfoot td.instload{color:#8a4e16}
+  table.wk .wktot{text-align:center;font-weight:800;border-left:2px solid var(--ink);background:#f0f3f7}
+  table.wk thead th.wktot{background:#e7edf3}
+  table.wk thead th.wktot small{display:block;font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0}
+  .wk-groups{display:flex;gap:14px;margin-top:16px;flex-wrap:wrap}
+  .wk-group{flex:1;min-width:200px;border:1px solid var(--line);border-radius:8px;padding:11px 12px}
+  .wk-group h4{margin:0 0 6px;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px}
+  .wk-group .gcount{color:var(--muted)}
+  .wk-group ul{margin:0;padding-left:17px}
+  .wk-group li{font-size:12.5px;margin:2px 0}
+  .wk-empty{color:var(--muted);font-size:12px}
+  .wk-foot{margin-top:14px;font-size:11.5px;color:var(--muted)}
+
+  /* print / PDF */
+  @media print{
+    @page{ size:landscape; margin:0.5in; }
+    body{ background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    header.app,.tabs,.weekly-toolbar,.toast,#modalRoot{ display:none !important; }
+    main{ padding:0 !important; }
+    #view-timeline,#view-leads,#view-rates,#view-backup{ display:none !important; }
+    #view-weekly{ display:block !important; }
+    .wksheet{ border:none; box-shadow:none; padding:0; max-width:none; }
+    table.wk th,table.wk td,.wk-group,.pchip{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    table.wk th,table.wk td{ border:1px solid #999 !important; }
+    tr{ page-break-inside:avoid; }
+    .wk-groups{ page-break-inside:avoid; }
+    .conflicts{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div class="hrow">
+    <div class="brand"><span class="logo">R</span> Renova Woodworks
+      <small>Production&nbsp;Manager</small></div>
+    <div class="spacer"></div>
+    <div class="drivebar" id="drivebar"></div>
+  </div>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="timeline">Timeline</button>
+    <button class="tab" data-tab="weekly">Weekly Sheet</button>
+    <button class="tab" data-tab="leads">Leads</button>
+    <button class="tab" data-tab="rates">Rate Template</button>
+    <button class="tab" data-tab="backup">Backup &amp; Sync</button>
+  </div>
+</header>
+
+<main>
+  <section id="view-timeline"></section>
+  <section id="view-weekly" style="display:none"></section>
+  <section id="view-leads" style="display:none"></section>
+  <section id="view-rates" style="display:none"></section>
+  <section id="view-backup" style="display:none"></section>
+</main>
+
+<div id="modalRoot"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* =================================================================
+   Renova Woodworks — Production Manager
+   Single-file app. State persisted to localStorage; optional Drive sync.
+   ================================================================= */
+
+/* ---------- constants ---------- */
+const LEAD_STAGES = [
+  "New Inquiry / Estimate Needed",
+  "Estimate Awaiting Approval",
+  "Job Sold",
+  "Appliance Specs Needed",
+  "Ready for Drawing",
+  "Ready for Site Measure",
+  "Measured – Waiting on Appliance Specs or Other Info",
+  "Drawings Sent – Awaiting Customer Approval",
+  "Drawing Revisions Needed",
+  "Final Cost Sent",
+  "Scheduled"
+];
+const PRE_DEFAULT_DAYS = 5;
+const DAY_W = 20;              // px per calendar day on the Gantt
+const WINDOW_BACK_DAYS = 14;   // days shown before today
+const WINDOW_FWD_DAYS = 125;   // ~4 months after today
+const LS_KEY = "renova_state_v1";
+
+/* ---------- tiny id ---------- */
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+/* ---------- date helpers (local, date-only) ---------- */
+function parseDate(iso){ if(!iso) return null; const [y,m,d]=iso.split("-").map(Number);
+  return new Date(y,(m||1)-1,d||1); }
+function fmtISO(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"),
+  dd=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${dd}`; }
+function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
+function isWeekend(d){ const g=d.getDay(); return g===0||g===6; }
+function nextWorkingDay(d){ let x=new Date(d); while(isWeekend(x)) x=addDays(x,1); return x; }
+function daysBetween(a,b){ return Math.round((stripTime(b)-stripTime(a))/86400000); }
+function stripTime(d){ return new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
+function today(){ return stripTime(new Date()); }
+const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function fmtNice(d){ return `${MONTHS[d.getMonth()]} ${d.getDate()}`; }
+function fmtRange(a,b){ return `${fmtNice(a)}–${b.getMonth()===a.getMonth()?b.getDate():fmtNice(b)}`; }
+
+/* addWorkingDays: end date that spans n working days starting at/after `start`. */
+function addWorkingDays(start,n){
+  n=Math.max(1,Math.floor(n||1));
+  let cur=nextWorkingDay(start), count=1;
+  while(count<n){ cur=nextWorkingDay(addDays(cur,1)); count++; }
+  return cur;
+}
+function flowNext(prevEnd){ return nextWorkingDay(addDays(prevEnd,1)); }
+function overlaps(a,b){ return a.start<=b.end && b.start<=a.end; }  // inclusive intervals
+function mondayOf(d){ const off=(d.getDay()+6)%7; return stripTime(addDays(d,-off)); }
+function phaseOnDay(m,day){ const t=stripTime(day);
+  if(m.pre.start<=t && t<=m.pre.end) return "pre";
+  if(m.prod.start<=t && t<=m.prod.end) return "prod";
+  if(m.install.start<=t && t<=m.install.end) return "install";
+  return null; }
+function workdayIndex(phase,day){ let i=0, cur=new Date(phase.start); const t=stripTime(day);
+  while(cur<=t){ if(!isWeekend(cur)) i++; cur=addDays(cur,1); } return i; }
+/* cabinets attributed to working-day `idx` (1-based) of a phase — evenly spread so the
+   daily counts always sum back to the job's cabinet count (front-loads any remainder). */
+function cabsForPhaseDay(cab, days, idx){ cab=Math.max(0,cab|0); days=Math.max(1,days|0);
+  const base=Math.floor(cab/days), rem=cab%days; return base + (idx<=rem?1:0); }
+
+/* =================================================================
+   STATE
+   ================================================================= */
+let state = { rates:[], jobs:[], leads:[], lastModified:0 };
+let ui = { tab:"timeline", weekStart:null };
+
+function seedState(){
+  const mk=(name)=>({id:uid(),name,prodPerDay:12,installPerDay:12});
+  const rates=[mk("Standard Overlay"),mk("Frameless/Full Overlay"),mk("Inset"),mk("Beaded Inset")];
+  const jobs=[
+    { id:uid(), name:"Johnson Kitchen", customer:"Johnson", cabinets:36,
+      styleId:rates[0].id, startDate:"2026-06-22", preDays:PRE_DEFAULT_DAYS,
+      overrides:{prod:null,install:null}, startOverrides:{pre:null,prod:null,install:null}, createdAt:1 },
+    { id:uid(), name:"Miller Bath Vanities", customer:"Miller", cabinets:24,
+      styleId:rates[1].id, startDate:"2026-06-24", preDays:PRE_DEFAULT_DAYS,
+      overrides:{prod:null,install:null}, startOverrides:{pre:null,prod:null,install:null}, createdAt:2 },
+    { id:uid(), name:"Green Pantry & Mudroom", customer:"Green", cabinets:18,
+      styleId:rates[2].id, startDate:"2026-07-20", preDays:PRE_DEFAULT_DAYS,
+      overrides:{prod:null,install:null}, startOverrides:{pre:null,prod:null,install:null}, createdAt:3 }
+  ];
+  const daysAgo=(n)=>fmtISO(addDays(today(),-n));
+  const leads=[
+    { id:uid(), name:"Alvarez Residence", phone:"(503) 555-0142", email:"tina@example.com",
+      stage:LEAD_STAGES[0], notes:"Full kitchen remodel, ~30 cabinets. Referral.", stageSince:daysAgo(2), createdAt:1 },
+    { id:uid(), name:"Cedar Ridge Builders", phone:"(503) 555-0199", email:"po@cedarridge.com",
+      stage:LEAD_STAGES[1], notes:"Spec home, 2 baths + kitchen.", stageSince:daysAgo(9), createdAt:2 },
+    { id:uid(), name:"Nguyen Kitchen", phone:"(971) 555-0177", email:"lan.nguyen@example.com",
+      stage:LEAD_STAGES[4], notes:"Frameless, waiting on final door style.", stageSince:daysAgo(1), createdAt:3 },
+    { id:uid(), name:"Whitfield Office Built-ins", phone:"(503) 555-0123", email:"m.whitfield@example.com",
+      stage:LEAD_STAGES[7], notes:"Sent drawings 7/1, following up.", stageSince:daysAgo(4), createdAt:4 },
+    { id:uid(), name:"Barton Laundry", phone:"(360) 555-0108", email:"barton@example.com",
+      stage:LEAD_STAGES[10], notes:"Approved. Ready to convert.", stageSince:daysAgo(1), createdAt:5 }
+  ];
+  return { rates, jobs, leads, lastModified:Date.now() };
+}
+
+function normalizeJob(j){
+  j.overrides = j.overrides || {prod:null,install:null};
+  if(j.overrides.prod===undefined) j.overrides.prod=null;
+  if(j.overrides.install===undefined) j.overrides.install=null;
+  j.startOverrides = j.startOverrides || {pre:null,prod:null,install:null};
+  if(j.preDays==null) j.preDays=PRE_DEFAULT_DAYS;
+  if(j.createdAt==null) j.createdAt=Date.now();
+  return j;
+}
+
+function loadState(){
+  try{
+    const raw=localStorage.getItem(LS_KEY);
+    if(raw){ const s=JSON.parse(raw);
+      state={ rates:s.rates||[], jobs:(s.jobs||[]).map(normalizeJob), leads:s.leads||[],
+        lastModified:s.lastModified||0 };
+      if(!state.rates.length) state.rates=seedState().rates;
+      return;
+    }
+  }catch(e){ console.warn("load failed",e); }
+  state=seedState();
+  persist(false);
+}
+
+function persist(touch=true){
+  if(touch) state.lastModified=Date.now();
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){ console.warn(e); }
+  if(touch) scheduleDriveSync();
+}
+
+/* =================================================================
+   PHASE COMPUTATION
+   ================================================================= */
+function styleById(id){ return state.rates.find(r=>r.id===id) || null; }
+
+function computeJob(j){
+  const st=styleById(j.styleId);
+  const cab=Math.max(0, Number(j.cabinets)||0);
+  const prodRate = st ? Number(st.prodPerDay)||0 : 0;
+  const instRate = st ? Number(st.installPerDay)||0 : 0;
+  const prodCalc = prodRate>0 ? Math.ceil(cab/prodRate) : null;
+  const instCalc = instRate>0 ? Math.ceil(cab/instRate) : null;
+
+  const preDays  = Math.max(1, Number(j.preDays)||PRE_DEFAULT_DAYS);
+  const prodOvr  = j.overrides && j.overrides.prod!=null;
+  const instOvr  = j.overrides && j.overrides.install!=null;
+  const prodDays = prodOvr ? Math.max(1,Number(j.overrides.prod)) : (prodCalc!=null?prodCalc:1);
+  const instDays = instOvr ? Math.max(1,Number(j.overrides.install)) : (instCalc!=null?instCalc:1);
+
+  const so=j.startOverrides||{};
+  const baseStart = parseDate(j.startDate) || today();
+
+  const preStart = so.pre ? parseDate(so.pre) : baseStart;
+  const preEnd   = addWorkingDays(preStart, preDays);
+  const prodStart= so.prod ? parseDate(so.prod) : flowNext(preEnd);
+  const prodEnd  = addWorkingDays(prodStart, prodDays);
+  const instStart= so.install ? parseDate(so.install) : flowNext(prodEnd);
+  const instEnd  = addWorkingDays(instStart, instDays);
+
+  return {
+    styleName: st ? st.name : "(no style)",
+    cab,
+    pre:    { start:preStart,  end:preEnd,  days:preDays,  calc:PRE_DEFAULT_DAYS, override: preDays!==PRE_DEFAULT_DAYS,
+              startOverride: !!so.pre },
+    prod:   { start:prodStart, end:prodEnd, days:prodDays, calc:prodCalc, rate:prodRate, override:prodOvr,
+              startOverride: !!so.prod },
+    install:{ start:instStart, end:instEnd, days:instDays, calc:instCalc, rate:instRate, override:instOvr,
+              startOverride: !!so.install }
+  };
+}
+
+/* compute for a hypothetical start (used by suggestion engine); flows all phases */
+function computeJobAtStart(j, isoStart){
+  const clone=JSON.parse(JSON.stringify(j));
+  clone.startDate=isoStart;
+  clone.startOverrides={pre:null,prod:null,install:null}; // flow cleanly
+  return computeJob(clone);
+}
+
+/* =================================================================
+   CONFLICT DETECTION  (same-phase Prod/Prod, Install/Install only)
+   ================================================================= */
+function computeAll(){
+  const map={};
+  state.jobs.forEach(j=> map[j.id]=computeJob(j));
+  return map;
+}
+
+function findConflicts(map){
+  const jobs=state.jobs, out=[];
+  for(let i=0;i<jobs.length;i++){
+    for(let k=i+1;k<jobs.length;k++){
+      const A=jobs[i], B=jobs[k], ca=map[A.id], cb=map[B.id];
+      ["prod","install"].forEach(ph=>{
+        if(overlaps(ca[ph],cb[ph])){
+          // mover = the one whose phase starts later; tie -> later createdAt (newer job)
+          let mover=A, other=B, cm=ca, co=cb;
+          if(cb[ph].start>ca[ph].start || (cb[ph].start.getTime()===ca[ph].start.getTime() && B.createdAt>A.createdAt)){
+            mover=B; other=A; cm=cb; co=ca;
+          }
+          out.push({ phase:ph, jobA:other, jobB:mover, cA:co, cB:cm });
+        }
+      });
+    }
+  }
+  return out;
+}
+
+/* earliest start (ISO) for `job` so its prod & install clear ALL other jobs' same phase */
+function suggestShift(job, map){
+  const base=parseDate(job.startDate)||today();
+  for(let k=1;k<=200;k++){
+    const iso=fmtISO(addDays(base,k));
+    const trial=computeJobAtStart(job,iso);
+    let clear=true;
+    for(const other of state.jobs){
+      if(other.id===job.id) continue;
+      const co=map[other.id];
+      if(overlaps(trial.prod,co.prod) || overlaps(trial.install,co.install)){ clear=false; break; }
+    }
+    if(clear) return iso;
+  }
+  return null;
+}
+function moversWithSuggestions(conflicts, map){
+  const byId={};
+  conflicts.forEach(c=>{ byId[c.jobB.id]=c.jobB; });
+  return Object.values(byId).map(job=>({ job, suggestion:suggestShift(job,map) }));
+}
+
+/* =================================================================
+   RENDER — shell / tabs
+   ================================================================= */
+function switchTab(t){
+  ui.tab=t;
+  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b.dataset.tab===t));
+  ["timeline","weekly","leads","rates","backup"].forEach(v=>{
+    document.getElementById("view-"+v).style.display = v===t ? "" : "none";
+  });
+  renderCurrent();
+}
+function renderCurrent(){
+  if(ui.tab==="timeline") renderTimeline();
+  else if(ui.tab==="weekly") renderWeekly();
+  else if(ui.tab==="leads") renderLeads();
+  else if(ui.tab==="rates") renderRates();
+  else if(ui.tab==="backup") renderBackup();
+  renderDriveBar();
+}
+function renderAll(){ renderCurrent(); }
+
+/* =================================================================
+   RENDER — Timeline / Gantt
+   ================================================================= */
+function renderTimeline(){
+  const root=document.getElementById("view-timeline");
+  const map=computeAll();
+  const conflicts=findConflicts(map);
+  const movers=moversWithSuggestions(conflicts,map);
+
+  let html="";
+
+  /* conflict banner */
+  if(conflicts.length){
+    html+=`<div class="conflicts"><div class="chd">⚠️ ${conflicts.length} scheduling conflict${conflicts.length>1?"s":""} detected</div><ul>`;
+    conflicts.forEach(c=>{
+      const phName=c.phase==="prod"?"Production":"Installation";
+      html+=`<li><span class="txt"><b>${esc(c.jobB.name)}</b> ${phName} (${fmtRange(c.cB[c.phase].start,c.cB[c.phase].end)}) overlaps
+        <b>${esc(c.jobA.name)}</b> ${phName} (${fmtRange(c.cA[c.phase].start,c.cA[c.phase].end)}).</span></li>`;
+    });
+    movers.forEach(m=>{
+      if(m.suggestion){
+        html+=`<li><span class="sugg">💡 Suggestion: move <b>${esc(m.job.name)}</b> start to <b>${fmtNice(parseDate(m.suggestion))}</b> to clear all its conflicts.</span>
+          <button class="tiny primary" onclick="applyShift('${m.job.id}','${m.suggestion}')">Apply shift</button></li>`;
+      } else {
+        html+=`<li><span class="sugg">No conflict-free start found for <b>${esc(m.job.name)}</b> within 200 days — adjust manually.</span></li>`;
+      }
+    });
+    html+=`</ul></div>`;
+  }
+
+  /* toolbar */
+  html+=`<div class="tl-toolbar">
+    <button class="primary" onclick="openJobModal()">+ Add Job</button>
+    <div class="legend">
+      <span class="sw"><span class="box" style="background:var(--pre-bg);border:1px solid #c3d3f0"></span>Pre-production</span>
+      <span class="sw"><span class="box" style="background:var(--prod-bg);border:1px solid #b7e2d2"></span>Production</span>
+      <span class="sw"><span class="box" style="background:var(--inst-bg);border:1px solid #eecfae"></span>Installation</span>
+      <span class="sw"><span class="box conflict" style="background:#fdeceb"></span>Conflict</span>
+    </div>
+    <div class="spacer" style="flex:1"></div>
+    <span class="hint">${state.jobs.length} job${state.jobs.length!==1?"s":""}</span>
+  </div>`;
+
+  /* gantt */
+  html+= state.jobs.length ? buildGantt(map,conflicts) :
+    `<div class="panel emptybox">No jobs yet. Click <b>+ Add Job</b> to schedule your first one, or load sample data from the <a href="#" onclick="switchTab('backup');return false">Backup &amp; Sync</a> tab.</div>`;
+
+  root.innerHTML=html;
+}
+
+function buildGantt(map,conflicts){
+  const winStart=addDays(today(),-WINDOW_BACK_DAYS);
+  const totalDays=WINDOW_BACK_DAYS+WINDOW_FWD_DAYS;
+  const trackW=totalDays*DAY_W;
+
+  // conflict phase set for highlighting: key jobId|phase
+  const cflag={};
+  conflicts.forEach(c=>{ cflag[c.jobA.id+"|"+c.phase]=1; cflag[c.jobB.id+"|"+c.phase]=1; });
+
+  // header: month row + week row
+  let months="", weeks="";
+  let mStart=0, mName=winStart.getMonth();
+  for(let d=0; d<=totalDays; d++){
+    const day=addDays(winStart,d);
+    if(d===totalDays || day.getMonth()!==mName){
+      const spanDays=d-mStart;
+      months+=`<div class="g-month" style="width:${spanDays*DAY_W}px">${MONTHS[mName]} ${addDays(winStart,mStart).getFullYear()}</div>`;
+      mStart=d; mName=day.getMonth();
+    }
+  }
+  for(let d=0; d<totalDays; d+=7){
+    const day=addDays(winStart,d);
+    weeks+=`<div class="g-week" style="width:${Math.min(7,totalDays-d)*DAY_W}px">${MONTHS[day.getMonth()]} ${day.getDate()}</div>`;
+  }
+
+  // weekend shading + today line
+  let bg="";
+  for(let d=0; d<totalDays; d++){
+    const day=addDays(winStart,d);
+    if(isWeekend(day)) bg+=`<div class="g-weekend" style="left:${d*DAY_W}px;width:${DAY_W}px"></div>`;
+  }
+  const todayX=daysBetween(winStart,today())*DAY_W;
+  bg+=`<div class="g-today" style="left:${todayX}px"><span class="lab">TODAY</span></div>`;
+
+  function barFor(job,map,phaseKey,cls,label){
+    const p=map[job.id][phaseKey];
+    const x=daysBetween(winStart,p.start)*DAY_W;
+    const w=(daysBetween(p.start,p.end)+1)*DAY_W;
+    const conf = cflag[job.id+"|"+phaseKey] ? " conflict":"";
+    const ov = (p.override||p.startOverride) ? " ✎":"";
+    const title = `${esc(job.name)} — ${label}: ${fmtRange(p.start,p.end)} (${p.days} wd)`;
+    return `<div class="bar ${cls}${conf}" style="left:${x}px;width:${Math.max(w,DAY_W)}px"
+      title="${title}" onclick="openJobModal('${job.id}')">${label[0]}${ov}</div>`;
+  }
+
+  let rows="";
+  state.jobs.forEach(job=>{
+    const m=map[job.id];
+    rows+=`<div class="g-row">
+      <div class="g-rowlabel">
+        <div class="jn" title="${esc(job.name)}">${esc(job.name)}</div>
+        <div class="jc">${esc(job.customer||"")} · ${job.cabinets||0} cab · ${esc(m.styleName)}</div>
+        <div class="acts">
+          <button class="tiny ghost" onclick="openJobModal('${job.id}')">Edit</button>
+          <button class="tiny ghost danger" onclick="deleteJob('${job.id}')">Delete</button>
+        </div>
+      </div>
+      <div class="g-track" style="width:${trackW}px">
+        ${bg}
+        ${barFor(job,map,"pre","pre","Pre")}
+        ${barFor(job,map,"prod","prod","Prod")}
+        ${barFor(job,map,"install","inst","Install")}
+      </div>
+    </div>`;
+  });
+
+  const labelHead=`<div class="g-label-col"></div>`;
+  return `<div class="gantt-wrap"><div class="gantt">
+    <div class="g-head">
+      <div class="g-monthrow">${labelHead}<div style="display:flex">${months}</div></div>
+      <div class="g-weekrow"><div class="g-label-col" style="border-top:1px solid var(--line2)"></div><div style="display:flex">${weeks}</div></div>
+    </div>
+    ${rows}
+  </div></div>`;
+}
+
+/* =================================================================
+   RENDER — Weekly shop schedule (print / PDF friendly)
+   ================================================================= */
+function currentWeekStart(){ return ui.weekStart ? parseDate(ui.weekStart) : mondayOf(today()); }
+function setWeek(iso){ const d=parseDate(iso)||today(); ui.weekStart=fmtISO(mondayOf(d)); renderWeekly(); }
+function shiftWeek(n){ ui.weekStart=fmtISO(addDays(currentWeekStart(),7*n)); renderWeekly(); }
+function thisWeek(){ ui.weekStart=fmtISO(mondayOf(today())); renderWeekly(); }
+function earliestStart(m){ return Math.min(+m.pre.start,+m.prod.start,+m.install.start); }
+function ivIntersectsWeek(iv,ws,we){ return iv.start<=we && iv.end>=ws; }
+
+function renderWeekly(){
+  const root=document.getElementById("view-weekly");
+  const ws=currentWeekStart();
+  const days=[]; for(let i=0;i<5;i++) days.push(addDays(ws,i));   // Mon–Fri
+  const weekEnd=days[4];
+  const map=computeAll();
+  const td=today().getTime();
+
+  const active=[];
+  state.jobs.forEach(j=>{ const m=map[j.id];
+    if(days.some(d=>phaseOnDay(m,d))) active.push({j,m}); });
+  active.sort((a,b)=>earliestStart(a.m)-earliestStart(b.m));
+
+  const grp={pre:[],prod:[],install:[]};
+  active.forEach(({j,m})=>["pre","prod","install"].forEach(k=>{
+    if(days.some(d=>phaseOnDay(m,d)===k)) grp[k].push(j.name); }));
+
+  const conflicts=findConflicts(map).filter(c=>ivIntersectsWeek(c.cB[c.phase],ws,weekEnd));
+
+  const dayNames=["Mon","Tue","Wed","Thu","Fri"];
+  const headCols=days.map((d,i)=>{
+    const isT=stripTime(d).getTime()===td;
+    return `<th class="day ${isT?"today-col":""}">${dayNames[i]}<small>${fmtNice(d)}</small></th>`;
+  }).join("");
+
+  const prodLoad=[0,0,0,0,0], instLoad=[0,0,0,0,0];
+  let rows="";
+  active.forEach(({j,m})=>{
+    let cells="", rowCabs=0;
+    days.forEach((d,di)=>{
+      const isT=stripTime(d).getTime()===td;
+      const k=phaseOnDay(m,d);
+      if(!k){ cells+=`<td class="${isT?"today-col":""}"></td>`; return; }
+      const cls=k==="install"?"inst":k;
+      const label=k==="pre"?"Pre-prod":k==="prod"?"Production":"Install";
+      const ph=m[k], idx=workdayIndex(ph,d);
+      const cabs = k==="pre" ? 0 : cabsForPhaseDay(m.cab, ph.days, idx);
+      if(k==="prod") prodLoad[di]+=cabs; else if(k==="install") instLoad[di]+=cabs;
+      rowCabs+=cabs;
+      const cabTxt = k==="pre" ? "" : ` · <b>${cabs}</b> cab`;
+      cells+=`<td class="${isT?"today-col":""}"><span class="pchip ${cls}">${label} <span class="pd">${idx}/${ph.days}</span>${cabTxt}</span></td>`;
+    });
+    rows+=`<tr><td class="jobcell"><div class="jn">${esc(j.name)}</div>
+      <div class="jc">${esc(j.customer||"")} · ${j.cabinets||0} cab · ${esc(m.styleName)}</div></td>${cells}<td class="wktot">${rowCabs||"·"}</td></tr>`;
+  });
+  const sum=arr=>arr.reduce((a,b)=>a+b,0);
+  const loadRow=(label,arr,cls)=>`<tr class="loadrow"><td class="jobcell ${cls}">${label}</td>${
+    days.map((d,i)=>{ const isT=stripTime(d).getTime()===td;
+      return `<td class="load ${cls} ${isT?"today-col":""}">${arr[i]||"·"}</td>`; }).join("")}<td class="load wktot ${cls}">${sum(arr)||"·"}</td></tr>`;
+  const loadFoot=`<tfoot>${loadRow("Production load (cab)",prodLoad,"prodload")}${loadRow("Install load (cab)",instLoad,"instload")}</tfoot>`;
+
+  const groupBox=(title,arr,cls)=>`<div class="wk-group"><h4 style="color:var(--${cls})">${title} <span class="gcount">(${arr.length})</span></h4>${
+    arr.length?`<ul>${arr.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>`:`<div class="wk-empty">— none —</div>`}</div>`;
+
+  root.innerHTML=`
+    <div class="weekly-toolbar tl-toolbar">
+      <button onclick="shiftWeek(-1)">‹ Prev week</button>
+      <button onclick="thisWeek()">This week</button>
+      <button onclick="shiftWeek(1)">Next week ›</button>
+      <input type="date" style="width:auto" value="${fmtISO(ws)}" onchange="setWeek(this.value)">
+      <div class="spacer" style="flex:1"></div>
+      <button class="primary" onclick="window.print()">🖨 Print / Save PDF</button>
+    </div>
+    <div class="wksheet">
+      <div class="wk-head">
+        <div>
+          <div class="wk-title">Renova Woodworks — Weekly Shop Schedule</div>
+          <div class="wk-sub">Week of ${fmtNice(days[0])} – ${fmtNice(weekEnd)}, ${weekEnd.getFullYear()}
+            &nbsp;·&nbsp; ${active.length} job${active.length!==1?"s":""} active
+            &nbsp;·&nbsp; generated ${fmtNice(today())}, ${today().getFullYear()}</div>
+        </div>
+        <div class="wk-legend">
+          <span class="pchip pre">Pre-prod</span>
+          <span class="pchip prod">Production</span>
+          <span class="pchip inst">Install</span>
+        </div>
+      </div>
+      ${conflicts.length?`<div class="conflicts" style="margin:0 0 14px"><div class="chd">⚠️ ${conflicts.length} conflict${conflicts.length>1?"s":""} affecting this week</div><ul>${
+        conflicts.map(c=>{const pn=c.phase==="prod"?"Production":"Installation";
+          return `<li><span class="txt"><b>${esc(c.jobB.name)}</b> &amp; <b>${esc(c.jobA.name)}</b> — overlapping ${pn} this week.</span></li>`;}).join("")}</ul></div>`:""}
+      ${active.length?
+        `<table class="wk"><thead><tr><th class="jobhd">Job</th>${headCols}<th class="wktot">Week<small>cab</small></th></tr></thead><tbody>${rows}</tbody>${loadFoot}</table>`
+        :`<div class="wk-empty" style="padding:30px;text-align:center">No jobs scheduled during this week. Use Prev / Next to browse other weeks.</div>`}
+      <div class="wk-groups">
+        ${groupBox("Pre-production",grp.pre,"pre")}
+        ${groupBox("On the shop floor",grp.prod,"prod")}
+        ${groupBox("Installations (on-site)",grp.install,"inst")}
+      </div>
+      <div class="wk-foot">Chips show phase and working-day progress — e.g. <b>Production 2/3</b> = day 2 of a 3-day build.
+        Shop days are Mon–Fri; weekends are not shown.</div>
+    </div>`;
+}
+
+/* =================================================================
+   JOB MODAL (add / edit)
+   ================================================================= */
+function openJobModal(id, prefill){
+  const editing = !!id;
+  const job = editing ? state.jobs.find(j=>j.id===id) : normalizeJob({
+    id:uid(), name:prefill&&prefill.name||"", customer:prefill&&prefill.customer||"", cabinets:12,
+    styleId: state.rates[0] ? state.rates[0].id : "", startDate: fmtISO(today()),
+    preDays:PRE_DEFAULT_DAYS, overrides:{prod:null,install:null},
+    startOverrides:{pre:null,prod:null,install:null}, createdAt:Date.now()
+  });
+  const w=JSON.parse(JSON.stringify(job));
+
+  function styleOpts(){ return state.rates.map(r=>`<option value="${r.id}" ${r.id===w.styleId?"selected":""}>${esc(r.name)}</option>`).join(""); }
+
+  function phaseCard(key,title){
+    const m=computeJob(w)[key];
+    const isPre = key==="pre";
+    const calcTxt = isPre ? `Default ${PRE_DEFAULT_DAYS} working days`
+      : (m.calc!=null ? `${m.cab} cabinets ÷ ${m.rate}/day = <b>${m.calc}</b> working days`
+                      : `No rate set for this style`);
+    const usingOvr = m.override;
+    const durVal = m.days;
+    const startVal = w.startOverrides[key] || "";
+    return `<div class="phasebox">
+      <h4><span class="pill ${usingOvr?"ovr":"calc"}">${usingOvr?"MANUAL":"CALCULATED"}</span>${title}</h4>
+      <div class="calcnote">${calcTxt}. Runs ${fmtRange(m.start,m.end)}.</div>
+      <div class="rowflex" style="margin-top:8px">
+        <div><label class="fld">Duration (working days)</label>
+          <input type="number" min="1" step="1" value="${durVal}" data-dur="${key}"></div>
+        <button class="tiny" data-revertdur="${key}" ${isPre? (durVal===PRE_DEFAULT_DAYS?"disabled":"") : (usingOvr?"":"disabled")}>Revert to ${isPre?"default":"calc"}</button>
+      </div>
+      <div class="rowflex" style="margin-top:8px">
+        <div><label class="fld">Manual start (optional — model a gap)</label>
+          <input type="date" value="${startVal}" data-start="${key}"></div>
+        <button class="tiny" data-clearstart="${key}" ${startVal?"":"disabled"}>Auto-flow</button>
+      </div>
+    </div>`;
+  }
+
+  function render(){
+    return `<div class="modal-bg" id="jobModal">
+      <div class="modal">
+        <div class="mhd"><h3>${editing?"Edit Job":"Add Job"}</h3><div class="spacer" style="flex:1"></div>
+          <button class="ghost" onclick="closeModal()">✕</button></div>
+        <div class="mbody">
+          <div class="grid2">
+            <div><label class="fld">Job name</label><input id="j_name" value="${esc(w.name)}"></div>
+            <div><label class="fld">Customer</label><input id="j_cust" value="${esc(w.customer)}"></div>
+          </div>
+          <div class="grid2">
+            <div><label class="fld">Number of cabinets</label><input id="j_cab" type="number" min="0" step="1" value="${w.cabinets}"></div>
+            <div><label class="fld">Cabinet style</label><select id="j_style">${styleOpts()}</select></div>
+          </div>
+          <div><label class="fld">Start date (Pre-production begins)</label><input id="j_start" type="date" value="${w.startDate}"></div>
+          <div class="sectlabel">Phases</div>
+          <div id="phaseCards" style="display:flex;flex-direction:column;gap:10px">
+            ${phaseCard("pre","Pre-production")}
+            ${phaseCard("prod","Production")}
+            ${phaseCard("install","Installation")}
+          </div>
+        </div>
+        <div class="mfoot">
+          ${editing?`<button class="danger" onclick="deleteJob('${w.id}');closeModal()">Delete</button>`:""}
+          <div class="spacer" style="flex:1"></div>
+          <button onclick="closeModal()">Cancel</button>
+          <button class="primary" id="j_save">${editing?"Save":"Add Job"}</button>
+        </div>
+      </div></div>`;
+  }
+
+  function mount(){
+    document.getElementById("modalRoot").innerHTML=render();
+    const root=document.getElementById("jobModal");
+    function pull(){
+      w.name=val("j_name"); w.customer=val("j_cust");
+      w.cabinets=Math.max(0,parseInt(val("j_cab"))||0);
+      w.styleId=val("j_style"); w.startDate=val("j_start")||fmtISO(today());
+    }
+    function refreshPhases(){
+      pull();
+      document.getElementById("phaseCards").innerHTML=
+        phaseCard("pre","Pre-production")+phaseCard("prod","Production")+phaseCard("install","Installation");
+      bindPhaseEvents();
+    }
+    function bindPhaseEvents(){
+      root.querySelectorAll("[data-dur]").forEach(inp=>inp.addEventListener("change",e=>{
+        const key=e.target.dataset.dur, v=Math.max(1,parseInt(e.target.value)||1);
+        if(key==="pre") w.preDays=v; else w.overrides[key]=v;
+        refreshPhases();
+      }));
+      root.querySelectorAll("[data-revertdur]").forEach(b=>b.addEventListener("click",e=>{
+        const key=e.target.dataset.revertdur;
+        if(key==="pre") w.preDays=PRE_DEFAULT_DAYS; else w.overrides[key]=null;
+        refreshPhases();
+      }));
+      root.querySelectorAll("[data-start]").forEach(inp=>inp.addEventListener("change",e=>{
+        const key=e.target.dataset.start; w.startOverrides[key]=e.target.value||null; refreshPhases();
+      }));
+      root.querySelectorAll("[data-clearstart]").forEach(b=>b.addEventListener("click",e=>{
+        const key=e.target.dataset.clearstart; w.startOverrides[key]=null; refreshPhases();
+      }));
+    }
+    ["j_name","j_cust","j_cab","j_style","j_start"].forEach(idn=>{
+      const el=document.getElementById(idn);
+      el.addEventListener("change",refreshPhases);
+    });
+    bindPhaseEvents();
+    document.getElementById("j_save").addEventListener("click",()=>{
+      pull();
+      if(!w.name.trim()){ toast("Enter a job name"); return; }
+      const idx=state.jobs.findIndex(j=>j.id===w.id);
+      if(idx>=0) state.jobs[idx]=w; else state.jobs.push(w);
+      persist(); closeModal(); if(ui.tab!=="timeline") switchTab("timeline"); else renderTimeline();
+      toast(editing?"Job updated":"Job added");
+    });
+    root.addEventListener("mousedown",e=>{ if(e.target===root) closeModal(); });
+  }
+  mount();
+}
+
+function deleteJob(id){
+  const j=state.jobs.find(x=>x.id===id); if(!j) return;
+  if(!confirm(`Delete job "${j.name}"? This cannot be undone.`)) return;
+  state.jobs=state.jobs.filter(x=>x.id!==id);
+  persist(); renderTimeline(); toast("Job deleted");
+}
+function applyShift(id,iso){
+  const j=state.jobs.find(x=>x.id===id); if(!j) return;
+  j.startDate=iso; j.startOverrides={pre:null,prod:null,install:null};
+  persist(); renderTimeline(); toast(`${j.name} moved to ${fmtNice(parseDate(iso))}`);
+}
+
+/* =================================================================
+   RENDER — Leads pipeline
+   ================================================================= */
+function leadAge(lead){ return daysBetween(parseDate(lead.stageSince)||today(), today()); }
+
+function renderLeads(){
+  const root=document.getElementById("view-leads");
+  let cols="";
+  LEAD_STAGES.forEach((stage,si)=>{
+    const items=state.leads.filter(l=>l.stage===stage);
+    let cards="";
+    items.forEach(l=>{
+      const age=leadAge(l);
+      const isSched = stage===LEAD_STAGES[LEAD_STAGES.length-1];
+      cards+=`<div class="lead" draggable="true" data-id="${l.id}"
+          ondragstart="leadDragStart(event,'${l.id}')">
+        <div class="ln">${esc(l.name||"(no name)")}</div>
+        <div class="lc">${esc(l.phone||"")}${l.phone&&l.email?" · ":""}${esc(l.email||"")}</div>
+        ${l.notes?`<div class="lnote">${esc(l.notes)}</div>`:""}
+        <div class="lfoot">
+          <span class="age ${age>=7?"old":""}">${age===0?"today":age+"d in stage"}</span>
+          <div class="spacer" style="flex:1"></div>
+          <button class="tiny ghost" onclick="openLeadModal('${l.id}')">Edit</button>
+        </div>
+        <div class="lfoot">
+          <select onchange="moveLead('${l.id}',this.value)">
+            ${LEAD_STAGES.map((s,i)=>`<option value="${i}" ${s===stage?"selected":""}>${esc(shortStage(s))}</option>`).join("")}
+          </select>
+          ${isSched?`<button class="tiny primary" onclick="convertLead('${l.id}')">→ Job</button>`:""}
+        </div>
+      </div>`;
+    });
+    cols+=`<div class="col" data-stage="${si}"
+        ondragover="leadDragOver(event,this)" ondragleave="leadDragLeave(this)" ondrop="leadDrop(event,${si},this)">
+      <div class="col-hd">${esc(stage)}<span class="cnt">${items.length}</span></div>
+      <div class="col-body">${cards||`<div class="hint" style="padding:6px">—</div>`}</div>
+    </div>`;
+  });
+
+  root.innerHTML=`
+    <div class="tl-toolbar">
+      <button class="primary" onclick="openLeadModal()">+ Add Lead</button>
+      <div class="spacer" style="flex:1"></div>
+      <span class="hint">${state.leads.length} lead${state.leads.length!==1?"s":""} · drag cards or use the stage dropdown</span>
+    </div>
+    <div class="board">${cols}</div>`;
+}
+function shortStage(s){ return s.length>34 ? s.slice(0,32)+"…" : s; }
+
+/* drag & drop */
+let dragLeadId=null;
+function leadDragStart(e,id){ dragLeadId=id; e.dataTransfer.effectAllowed="move"; }
+function leadDragOver(e,col){ e.preventDefault(); col.classList.add("drag-over"); }
+function leadDragLeave(col){ col.classList.remove("drag-over"); }
+function leadDrop(e,stageIdx,col){ e.preventDefault(); col.classList.remove("drag-over");
+  if(dragLeadId){ moveLead(dragLeadId, stageIdx); dragLeadId=null; } }
+
+function moveLead(id, stageIdx){
+  const l=state.leads.find(x=>x.id===id); if(!l) return;
+  const newStage=LEAD_STAGES[Number(stageIdx)];
+  if(l.stage===newStage) return;
+  l.stage=newStage; l.stageSince=fmtISO(today());
+  persist(); renderLeads();
+}
+
+function openLeadModal(id){
+  const editing=!!id;
+  const l = editing ? state.leads.find(x=>x.id===id)
+    : { id:uid(), name:"", phone:"", email:"", stage:LEAD_STAGES[0], notes:"", stageSince:fmtISO(today()), createdAt:Date.now() };
+  const w=JSON.parse(JSON.stringify(l));
+  document.getElementById("modalRoot").innerHTML=`
+    <div class="modal-bg" id="leadModal">
+      <div class="modal" style="max-width:480px">
+        <div class="mhd"><h3>${editing?"Edit Lead":"Add Lead"}</h3><div class="spacer" style="flex:1"></div>
+          <button class="ghost" onclick="closeModal()">✕</button></div>
+        <div class="mbody">
+          <div><label class="fld">Customer name</label><input id="l_name" value="${esc(w.name)}"></div>
+          <div class="grid2">
+            <div><label class="fld">Phone</label><input id="l_phone" value="${esc(w.phone)}"></div>
+            <div><label class="fld">Email</label><input id="l_email" value="${esc(w.email)}"></div>
+          </div>
+          <div><label class="fld">Stage</label>
+            <select id="l_stage">${LEAD_STAGES.map(s=>`<option ${s===w.stage?"selected":""}>${esc(s)}</option>`).join("")}</select></div>
+          <div><label class="fld">Notes</label><textarea id="l_notes" rows="3">${esc(w.notes)}</textarea></div>
+          <div class="hint">In current stage since ${fmtNice(parseDate(w.stageSince)||today())} (${leadAge(w)}d).</div>
+        </div>
+        <div class="mfoot">
+          ${editing?`<button class="danger" onclick="deleteLead('${w.id}')">Delete</button>`:""}
+          <div class="spacer" style="flex:1"></div>
+          <button onclick="closeModal()">Cancel</button>
+          <button class="primary" id="l_save">${editing?"Save":"Add Lead"}</button>
+        </div>
+      </div></div>`;
+  const root=document.getElementById("leadModal");
+  root.addEventListener("mousedown",e=>{ if(e.target===root) closeModal(); });
+  document.getElementById("l_save").addEventListener("click",()=>{
+    const prevStage=w.stage;
+    w.name=val("l_name"); w.phone=val("l_phone"); w.email=val("l_email");
+    const newStage=val("l_stage"); w.notes=val("l_notes");
+    if(!w.name.trim()){ toast("Enter a customer name"); return; }
+    if(newStage!==prevStage){ w.stage=newStage; w.stageSince=fmtISO(today()); }
+    const idx=state.leads.findIndex(x=>x.id===w.id);
+    if(idx>=0) state.leads[idx]=w; else state.leads.push(w);
+    persist(); closeModal(); renderLeads(); toast(editing?"Lead updated":"Lead added");
+  });
+}
+function deleteLead(id){
+  const l=state.leads.find(x=>x.id===id); if(!l) return;
+  if(!confirm(`Delete lead "${l.name}"?`)) return;
+  state.leads=state.leads.filter(x=>x.id!==id);
+  persist(); closeModal(); renderLeads(); toast("Lead deleted");
+}
+
+/* convert a Scheduled lead -> job */
+function convertLead(id){
+  const l=state.leads.find(x=>x.id===id); if(!l) return;
+  document.getElementById("modalRoot").innerHTML=`
+    <div class="modal-bg" id="cvModal">
+      <div class="modal" style="max-width:420px">
+        <div class="mhd"><h3>Convert to Job</h3><div class="spacer" style="flex:1"></div>
+          <button class="ghost" onclick="closeModal()">✕</button></div>
+        <div class="mbody">
+          <div class="hint">Creating a job for <b>${esc(l.name)}</b>. Enter a start date; the lead will be removed from the board and the job form opens to finish the details.</div>
+          <div><label class="fld">Start date</label><input id="cv_start" type="date" value="${fmtISO(today())}"></div>
+        </div>
+        <div class="mfoot"><div class="spacer" style="flex:1"></div>
+          <button onclick="closeModal()">Cancel</button>
+          <button class="primary" id="cv_go">Create Job</button>
+        </div>
+      </div></div>`;
+  const root=document.getElementById("cvModal");
+  root.addEventListener("mousedown",e=>{ if(e.target===root) closeModal(); });
+  document.getElementById("cv_go").addEventListener("click",()=>{
+    const start=val("cv_start")||fmtISO(today());
+    state.leads=state.leads.filter(x=>x.id!==id);
+    persist();
+    closeModal();
+    openJobModal(null,{name:l.name+" (kitchen)",customer:l.name});
+    setTimeout(()=>{ const s=document.getElementById("j_start"); if(s){ s.value=start; s.dispatchEvent(new Event("change")); } },0);
+    renderLeads();
+    toast("Lead converted — finish the job details");
+  });
+}
+
+/* =================================================================
+   RENDER — Rate Template
+   ================================================================= */
+function renderRates(){
+  const root=document.getElementById("view-rates");
+  let rows="";
+  state.rates.forEach(r=>{
+    rows+=`<tr>
+      <td><input value="${esc(r.name)}" onchange="updateRate('${r.id}','name',this.value)"></td>
+      <td class="num"><input type="number" min="1" step="1" value="${r.prodPerDay}" onchange="updateRate('${r.id}','prodPerDay',this.value)"></td>
+      <td class="num"><input type="number" min="1" step="1" value="${r.installPerDay}" onchange="updateRate('${r.id}','installPerDay',this.value)"></td>
+      <td><button class="tiny ghost danger" onclick="deleteRate('${r.id}')">Delete</button></td>
+    </tr>`;
+  });
+  root.innerHTML=`
+    <div class="tl-toolbar"><button class="primary" onclick="addRate()">+ Add Style</button>
+      <div class="spacer" style="flex:1"></div>
+      <span class="hint">Editing a rate recalculates every job using that style (except phases with a manual override).</span></div>
+    <div class="panel" style="padding:16px;max-width:680px">
+      <table class="rt">
+        <thead><tr><th>Cabinet style</th><th>Production cab/day</th><th>Install cab/day</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="4" class="hint" style="padding:12px">No styles. Add one to schedule jobs.</td></tr>`}</tbody>
+      </table>
+      <div class="hint" style="margin-top:12px">Production and Install are kept as separate columns so they can diverge later
+        (e.g. a fussy inset style installs slower than it builds).</div>
+    </div>`;
+}
+function updateRate(id,field,value){
+  const r=state.rates.find(x=>x.id===id); if(!r) return;
+  if(field==="name") r.name=value; else r[field]=Math.max(1,parseInt(value)||1);
+  persist();
+  if(field!=="name") renderRates();
+  toast("Rate updated — jobs recalculated");
+}
+function addRate(){
+  state.rates.push({id:uid(),name:"New Style",prodPerDay:12,installPerDay:12});
+  persist(); renderRates();
+}
+function deleteRate(id){
+  const used=state.jobs.filter(j=>j.styleId===id);
+  if(used.length){
+    if(!confirm(`${used.length} job(s) use this style. Delete anyway? Those jobs will show "(no style)" and default to 1-day phases until reassigned.`)) return;
+  } else {
+    if(!confirm("Delete this style?")) return;
+  }
+  state.rates=state.rates.filter(x=>x.id!==id);
+  persist(); renderRates();
+}
+
+/* =================================================================
+   RENDER — Backup & Sync tab
+   ================================================================= */
+function renderBackup(){
+  const root=document.getElementById("view-backup");
+  const configured = driveConfigured();
+  root.innerHTML=`
+    <div class="panel" style="padding:18px;max-width:720px;margin-bottom:16px">
+      <h3 style="margin:0 0 6px">Google Drive sync</h3>
+      <div id="driveStatus" class="hint" style="margin-bottom:12px"></div>
+      ${configured ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="primary" id="btnConnect">Connect Google Drive</button>
+          <button id="btnSyncNow">Sync now</button>
+          <button id="btnDisconnect" class="ghost">Disconnect</button>
+        </div>` : `
+        <div class="conflicts" style="margin:0"><div class="chd" style="border:none">⚙️ Drive not configured</div>
+          <div style="padding:0 14px 12px" class="hint">Paste your OAuth Client ID into the <code>GOOGLE_CLIENT_ID</code>
+          constant near the top of this HTML file (see the commented instructions there), then serve the file from
+          <code>http://localhost</code> and reload. Everything else works without it.</div></div>`}
+    </div>
+
+    <div class="panel" style="padding:18px;max-width:720px;margin-bottom:16px">
+      <h3 style="margin:0 0 6px">Offline backup (no Google needed)</h3>
+      <div class="hint" style="margin-bottom:12px">Export a JSON snapshot of all jobs, leads and rates, or import one to restore.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="primary" onclick="exportJSON()">Export to JSON</button>
+        <button onclick="document.getElementById('importFile').click()">Import from JSON</button>
+        <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importJSON(event)">
+      </div>
+    </div>
+
+    <div class="panel" style="padding:18px;max-width:720px">
+      <h3 style="margin:0 0 6px">Sample data</h3>
+      <div class="hint" style="margin-bottom:12px">Reload the built-in demo (4 styles, 3 jobs with a live conflict, 5 leads),
+        or wipe everything and start clean.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="loadSample()">Reload sample data</button>
+        <button class="danger" onclick="clearAll()">Clear all data</button>
+      </div>
+    </div>`;
+  updateDriveStatusText();
+  if(configured){
+    const c=document.getElementById("btnConnect"); if(c) c.onclick=connectDrive;
+    const s=document.getElementById("btnSyncNow"); if(s) s.onclick=()=>driveSyncNow(true);
+    const d=document.getElementById("btnDisconnect"); if(d) d.onclick=disconnectDrive;
+  }
+}
+
+function exportJSON(){
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="renova-production-data.json"; a.click(); URL.revokeObjectURL(a.href);
+  toast("Exported");
+}
+function importJSON(ev){
+  const f=ev.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ try{
+      const s=JSON.parse(r.result);
+      if(!s || typeof s!=="object") throw 0;
+      state={ rates:(s.rates||[]), jobs:(s.jobs||[]).map(normalizeJob), leads:(s.leads||[]),
+        lastModified:Date.now() };
+      if(!state.rates.length) state.rates=seedState().rates;
+      persist(); renderCurrent(); toast("Imported");
+    }catch(e){ toast("Invalid JSON file"); }
+  };
+  r.readAsText(f); ev.target.value="";
+}
+function loadSample(){ if(!confirm("Replace current data with sample data?")) return;
+  state=seedState(); persist(); switchTab("timeline"); toast("Sample data loaded"); }
+function clearAll(){ if(!confirm("Delete ALL jobs and leads? Rate styles are kept.")) return;
+  state.jobs=[]; state.leads=[]; persist(); renderCurrent(); toast("Cleared"); }
+
+/* =================================================================
+   GOOGLE DRIVE SYNC
+   ================================================================= */
+let drive = { tokenClient:null, accessToken:null, tokenExpiry:0, fileId:null,
+  connected:false, account:"", lastSynced:0, status:"idle", error:"" };
+
+function driveConfigured(){ return GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("PASTE_"); }
+const DRIVE_FLAG="renova_drive_connected";
+
+function initTokenClient(cb){
+  if(!window.google || !google.accounts || !google.accounts.oauth2){ return null; }
+  if(!drive.tokenClient){
+    drive.tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID, scope: DRIVE_SCOPE,
+      callback: (resp)=>{
+        if(resp && resp.access_token){
+          drive.accessToken=resp.access_token;
+          drive.tokenExpiry=Date.now()+ (Number(resp.expires_in||3600)-60)*1000;
+          drive.connected=true; localStorage.setItem(DRIVE_FLAG,"1");
+          if(cb) cb(true);
+        } else { if(cb) cb(false); }
+      },
+      error_callback:(err)=>{ drive.status="error"; drive.error=(err&&err.type)||"auth error";
+        renderDriveBar(); updateDriveStatusText(); if(cb) cb(false); }
+    });
+  }
+  return drive.tokenClient;
+}
+
+function connectDrive(){
+  if(!driveConfigured()){ toast("Set GOOGLE_CLIENT_ID first"); return; }
+  const tc=initTokenClient((ok)=>{ if(ok) afterConnect(); });
+  if(!tc){ toast("Google library still loading — try again in a moment"); return; }
+  drive.status="syncing"; renderDriveBar(); updateDriveStatusText();
+  tc.requestAccessToken({prompt:"consent"});
+}
+function silentReconnect(){
+  if(!driveConfigured()) return;
+  if(localStorage.getItem(DRIVE_FLAG)!=="1") return;
+  const tc=initTokenClient((ok)=>{ if(ok) afterConnect(true); });
+  if(!tc){ setTimeout(silentReconnect,800); return; }
+  try{ tc.requestAccessToken({prompt:""}); }catch(e){}
+}
+function disconnectDrive(){
+  const tok=drive.accessToken;
+  drive.connected=false; drive.accessToken=null; drive.fileId=null; drive.account="";
+  localStorage.removeItem(DRIVE_FLAG);
+  if(tok && window.google&&google.accounts&&google.accounts.oauth2){
+    try{ google.accounts.oauth2.revoke(tok); }catch(e){}
+  }
+  drive.status="idle"; renderDriveBar(); updateDriveStatusText(); toast("Disconnected");
+}
+
+async function driveFetch(url,opts){
+  opts=opts||{}; opts.headers=Object.assign({Authorization:"Bearer "+drive.accessToken},opts.headers||{});
+  const r=await fetch(url,opts);
+  if(!r.ok){ const t=await r.text(); throw new Error("Drive "+r.status+": "+t.slice(0,120)); }
+  return r;
+}
+async function fetchAccountEmail(){
+  try{ const r=await driveFetch("https://www.googleapis.com/drive/v3/about?fields=user");
+    const j=await r.json(); drive.account=j.user&&j.user.emailAddress||""; }catch(e){}
+}
+async function findOrCreateFile(){
+  const q=encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const r=await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)&spaces=drive`);
+  const j=await r.json();
+  if(j.files&&j.files.length){ drive.fileId=j.files[0].id; return {created:false, modifiedTime:j.files[0].modifiedTime}; }
+  const meta={name:DRIVE_FILE_NAME,mimeType:"application/json"};
+  const cr=await driveFetch("https://www.googleapis.com/drive/v3/files?fields=id",{
+    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(meta)});
+  const cj=await cr.json(); drive.fileId=cj.id; return {created:true};
+}
+async function drivePull(){
+  if(!drive.fileId) return null;
+  try{
+    const r=await driveFetch(`https://www.googleapis.com/drive/v3/files/${drive.fileId}?alt=media`);
+    const txt=await r.text(); if(!txt.trim()) return null;
+    return JSON.parse(txt);
+  }catch(e){ return null; }
+}
+async function drivePush(){
+  if(!drive.fileId) return;
+  await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${drive.fileId}?uploadType=media`,{
+    method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(state)});
+}
+
+async function afterConnect(silent){
+  try{
+    drive.status="syncing"; renderDriveBar(); updateDriveStatusText();
+    await fetchAccountEmail();
+    await findOrCreateFile();
+    const remote=await drivePull();
+    if(remote && typeof remote==="object" && (remote.jobs||remote.leads||remote.rates)){
+      const rMod=Number(remote.lastModified)||0, lMod=Number(state.lastModified)||0;
+      if(rMod>lMod){
+        state={ rates:remote.rates||state.rates, jobs:(remote.jobs||[]).map(normalizeJob),
+          leads:remote.leads||[], lastModified:rMod };
+        localStorage.setItem(LS_KEY,JSON.stringify(state));
+        renderCurrent();
+        toast("Loaded newer data from Drive");
+      } else if(lMod>rMod){
+        await drivePush();
+      }
+    } else {
+      await drivePush();
+    }
+    drive.lastSynced=Date.now(); drive.status="synced";
+  }catch(e){ drive.status="error"; drive.error=e.message; }
+  renderDriveBar(); updateDriveStatusText();
+}
+
+let driveDebounce=null;
+function scheduleDriveSync(){
+  if(!drive.connected) return;
+  clearTimeout(driveDebounce);
+  drive.status="syncing"; renderDriveBar();
+  driveDebounce=setTimeout(()=>driveSyncNow(false),1500);
+}
+async function driveSyncNow(manual){
+  if(!drive.connected){ if(manual) toast("Connect Google Drive first"); return; }
+  if(drive.tokenExpiry && Date.now()>drive.tokenExpiry){
+    const tc=initTokenClient((ok)=>{ if(ok) driveSyncNow(manual); });
+    try{ tc.requestAccessToken({prompt:""}); }catch(e){}
+    return;
+  }
+  try{
+    drive.status="syncing"; renderDriveBar();
+    if(!drive.fileId) await findOrCreateFile();
+    await drivePush();
+    drive.lastSynced=Date.now(); drive.status="synced";
+    if(manual) toast("Synced to Drive");
+  }catch(e){ drive.status="error"; drive.error=e.message; if(manual) toast("Sync failed"); }
+  renderDriveBar(); updateDriveStatusText();
+}
+
+function timeAgo(ts){ if(!ts) return "never"; const s=Math.round((Date.now()-ts)/1000);
+  if(s<60) return s+"s ago"; if(s<3600) return Math.round(s/60)+"m ago"; return Math.round(s/3600)+"h ago"; }
+
+function renderDriveBar(){
+  const bar=document.getElementById("drivebar"); if(!bar) return;
+  if(!driveConfigured()){
+    bar.innerHTML=`<span class="dot"></span> Drive: not configured
+      <button class="ghost tiny" onclick="switchTab('backup')">Set up</button>`; return;
+  }
+  let cls="", label="";
+  if(!drive.connected){ cls=""; label="Drive: not connected"; }
+  else if(drive.status==="syncing"){ cls="sync"; label="Syncing…"; }
+  else if(drive.status==="error"){ cls="err"; label="Sync error"; }
+  else { cls="ok"; label=`Synced ${timeAgo(drive.lastSynced)}`; }
+  const acct = drive.account ? ` · ${esc(drive.account)}` : "";
+  bar.innerHTML=`<span class="dot ${cls}"></span> ${label}${drive.connected?acct:""}
+    ${drive.connected?`<button class="ghost tiny" onclick="driveSyncNow(true)">Sync now</button>`
+                     :`<button class="ghost tiny" onclick="connectDrive()">Connect</button>`}`;
+}
+function updateDriveStatusText(){
+  const el=document.getElementById("driveStatus"); if(!el) return;
+  if(!driveConfigured()){ el.textContent="Not configured."; return; }
+  if(!drive.connected){ el.innerHTML="Not connected. Click Connect to sign in and back up to your Drive."; return; }
+  let s=`Connected${drive.account?" as <b>"+esc(drive.account)+"</b>":""}. `;
+  s+= drive.status==="error" ? `<span style="color:var(--danger)">Error: ${esc(drive.error)}</span>`
+     : `Last synced ${timeAgo(drive.lastSynced)}. Data file: <code>${DRIVE_FILE_NAME}</code>.`;
+  el.innerHTML=s;
+}
+
+/* =================================================================
+   UTIL
+   ================================================================= */
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
+function val(id){ const el=document.getElementById(id); return el?el.value:""; }
+function closeModal(){ document.getElementById("modalRoot").innerHTML=""; }
+let toastT=null;
+function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("show"),1900); }
+
+/* =================================================================
+   BOOT
+   ================================================================= */
+document.getElementById("tabs").addEventListener("click",e=>{
+  const b=e.target.closest(".tab"); if(b) switchTab(b.dataset.tab);
+});
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeModal(); });
+
+loadState();
+renderCurrent();
+window.addEventListener("load",()=>{ setTimeout(silentReconnect,600); });
+</script>
+</body>
+</html>
