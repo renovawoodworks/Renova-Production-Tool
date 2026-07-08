@@ -156,6 +156,11 @@
   .bar.conflict{outline:2px solid var(--danger);outline-offset:-1px;z-index:4;
     background-image:repeating-linear-gradient(45deg,rgba(213,73,63,.22) 0 5px,transparent 5px 10px)}
   .g-empty{padding:26px;text-align:center;color:var(--muted)}
+  .bkrow{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 2px;border-bottom:1px solid var(--line2)}
+  .bkrow:last-child{border-bottom:none}
+  .bkinfo{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .bkinfo b{font-size:13px}
+  .bkacts{display:flex;gap:6px;flex:none}
 
   /* leads */
   .board{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px}
@@ -271,7 +276,7 @@
 <header class="app">
   <div class="hrow">
     <div class="brand"><span class="logo">R</span> Renova Woodworks
-      <small>Production&nbsp;Manager</small></div>
+      <small id="verLabel">Production&nbsp;Manager</small></div>
     <div class="spacer"></div>
     <div class="drivebar" id="drivebar"></div>
   </div>
@@ -320,6 +325,10 @@ const DAY_W = 26;              // px per calendar day on the Gantt
 const WINDOW_BACK_DAYS = 14;   // days shown before today
 const WINDOW_FWD_DAYS = 125;   // ~4 months after today
 const LS_KEY = "renova_state_v1";
+const APP_VERSION = "1.3.1";              // shown in header + Backup tab; bump when the app changes
+const APP_BUILD = "2026-07-08";
+const BK_KEY = "renova_autobackups_v1";   // separate key so auto-backups survive app updates
+const BK_MAX = 8;                         // keep the most recent N automatic snapshots
 
 /* ---------- tiny id ---------- */
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -895,9 +904,14 @@ function openJobModal(id, prefill){
         if(key==="pre") w.preDays=PRE_DEFAULT_DAYS; else w.overrides[key]=null;
         refreshPhases();
       }));
-      root.querySelectorAll("[data-start]").forEach(inp=>inp.addEventListener("change",e=>{
-        const key=e.target.dataset.start; w.startOverrides[key]=e.target.value||null; refreshPhases();
-      }));
+      root.querySelectorAll("[data-start]").forEach(inp=>{
+        // Update the model as the value changes, but DON'T rebuild the cards here —
+        // a native date input fires 'change' on each intermediate valid date while you
+        // type the year (0002, 0020, 0202, 2026...), and rebuilding would destroy the
+        // field mid-type. Defer the rebuild to 'blur', once the user leaves the field.
+        inp.addEventListener("change",e=>{ const key=e.target.dataset.start; w.startOverrides[key]=e.target.value||null; });
+        inp.addEventListener("blur",e=>{ const key=e.target.dataset.start; w.startOverrides[key]=e.target.value||null; refreshPhases(); });
+      });
       root.querySelectorAll("[data-clearstart]").forEach(b=>b.addEventListener("click",e=>{
         const key=e.target.dataset.clearstart; w.startOverrides[key]=null; refreshPhases();
       }));
@@ -1157,15 +1171,26 @@ function renderBackup(){
       </div>
     </div>
 
+    <div class="panel" style="padding:18px;max-width:720px;margin-bottom:16px">
+      <h3 style="margin:0 0 6px">Automatic backups</h3>
+      <div class="hint" style="margin-bottom:12px">A snapshot is saved automatically each time you open the app with data,
+        and just before any risky action (import, sample load, clear). These live in this browser and survive app updates.
+        Keeps the ${BK_MAX} most recent.</div>
+      <div id="bkList">${renderBackupList()}</div>
+    </div>
+
     <div class="panel" style="padding:18px;max-width:720px">
       <h3 style="margin:0 0 6px">Sample data</h3>
       <div class="hint" style="margin-bottom:12px">Reload the built-in demo (4 styles, 3 jobs with a live conflict, 5 leads),
-        or wipe everything and start clean.</div>
+        or wipe everything and start clean. Both snapshot your current data first.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button onclick="loadSample()">Reload sample data</button>
         <button class="danger" onclick="clearAll()">Clear all data</button>
       </div>
-    </div>`;
+    </div>
+
+    <div class="hint" style="max-width:720px;margin-top:14px;text-align:center">
+      Renova Woodworks Production Manager · version ${APP_VERSION} · build ${APP_BUILD}</div>`;
   updateDriveStatusText();
   if(configured){
     const c=document.getElementById("btnConnect"); if(c) c.onclick=connectDrive;
@@ -1186,6 +1211,7 @@ function importJSON(ev){
   r.onload=()=>{ try{
       const s=JSON.parse(r.result);
       if(!s || typeof s!=="object") throw 0;
+      autoBackupNow("before importing a JSON file");
       state={ rates:(s.rates||[]), jobs:(s.jobs||[]).map(normalizeJob), leads:(s.leads||[]),
         lastModified:Date.now() };
       if(!state.rates.length) state.rates=seedState().rates;
@@ -1195,9 +1221,59 @@ function importJSON(ev){
   r.readAsText(f); ev.target.value="";
 }
 function loadSample(){ if(!confirm("Replace current data with sample data?")) return;
+  autoBackupNow("before loading sample data");
   state=seedState(); persist(); switchTab("timeline"); toast("Sample data loaded"); }
 function clearAll(){ if(!confirm("Delete ALL jobs and leads? Rate styles are kept.")) return;
+  autoBackupNow("before clearing all data");
   state.jobs=[]; state.leads=[]; persist(); renderCurrent(); toast("Cleared"); }
+
+/* =================================================================
+   AUTO-BACKUP  (rolling local snapshots, independent of the main data key)
+   ================================================================= */
+function listBackups(){ try{ return JSON.parse(localStorage.getItem(BK_KEY))||[]; }catch(e){ return []; } }
+function saveBackups(list){ try{ localStorage.setItem(BK_KEY, JSON.stringify(list)); }catch(e){ console.warn(e); } }
+/* Snapshot a raw stored-state string. Skips empty data and duplicates of the last snapshot. */
+function autoBackup(raw, note){
+  if(!raw) return;
+  let parsed; try{ parsed=JSON.parse(raw); }catch(e){ return; }
+  const jobs=(parsed.jobs||[]).length, leads=(parsed.leads||[]).length;
+  if(!jobs && !leads) return;                       // nothing worth keeping
+  const list=listBackups();
+  if(list.length && list[list.length-1].raw===raw) return;  // unchanged since last backup
+  list.push({ ts:Date.now(), version:APP_VERSION, jobs, leads, note:note||"", raw });
+  while(list.length>BK_MAX) list.shift();
+  saveBackups(list);
+}
+/* Snapshot the CURRENT saved data on demand (used before destructive actions). */
+function autoBackupNow(note){ autoBackup(localStorage.getItem(LS_KEY), note); }
+function downloadBackup(ts){
+  const b=listBackups().find(x=>x.ts===ts); if(!b) return;
+  const blob=new Blob([b.raw],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download=`renova-backup-${fmtISO(new Date(b.ts))}.json`; a.click(); URL.revokeObjectURL(a.href);
+}
+function restoreBackup(ts){
+  const b=listBackups().find(x=>x.ts===ts); if(!b) return;
+  if(!confirm(`Restore the snapshot from ${new Date(b.ts).toLocaleString()}?\nThis replaces current data with ${b.jobs} jobs and ${b.leads} leads. Your current data is snapshotted first, so this is reversible.`)) return;
+  autoBackupNow("auto-saved before a restore");
+  try{
+    const s=JSON.parse(b.raw);
+    state={ rates:s.rates&&s.rates.length?s.rates:seedState().rates,
+      jobs:(s.jobs||[]).map(normalizeJob), leads:s.leads||[], lastModified:Date.now() };
+    persist(); renderCurrent(); toast("Backup restored");
+  }catch(e){ toast("Restore failed"); }
+}
+function renderBackupList(){
+  const bks=listBackups().slice().reverse();
+  if(!bks.length) return `<div class="hint">No automatic backups yet — one is saved the next time you open the app with data.</div>`;
+  return bks.map(b=>`<div class="bkrow">
+    <div class="bkinfo"><b>${new Date(b.ts).toLocaleString()}</b>
+      <span class="hint">v${b.version||"?"} · ${b.jobs} job${b.jobs!==1?"s":""}, ${b.leads} lead${b.leads!==1?"s":""}${b.note?` · ${esc(b.note)}`:""}</span></div>
+    <div class="bkacts">
+      <button class="tiny" onclick="downloadBackup(${b.ts})">Download</button>
+      <button class="tiny primary" onclick="restoreBackup(${b.ts})">Restore</button>
+    </div></div>`).join("");
+}
 
 /* =================================================================
    GOOGLE DRIVE SYNC
@@ -1382,7 +1458,13 @@ document.getElementById("tabs").addEventListener("click",e=>{
 });
 document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeModal(); });
 
+// Auto-backup safeguard: snapshot whatever data was saved BEFORE this (possibly new) version
+// touches anything, so a bad update can always be rolled back from the Backup & Sync tab.
+const __rawAtBoot = (function(){ try{ return localStorage.getItem(LS_KEY); }catch(e){ return null; } })();
 loadState();
+autoBackup(__rawAtBoot, "auto-saved on app open");
+const __vl=document.getElementById("verLabel");
+if(__vl) __vl.innerHTML="Production&nbsp;Manager · v"+APP_VERSION;
 renderCurrent();
 window.addEventListener("load",()=>{ setTimeout(silentReconnect,600); });
 </script>
